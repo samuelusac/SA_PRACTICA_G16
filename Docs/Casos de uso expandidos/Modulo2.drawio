@@ -1,0 +1,63 @@
+<mxfile host="Electron">
+  <diagram name="Página-1" id="KlIxF1vkeKjsf7NU3JFA">
+    <mxGraphModel dx="1414" dy="841" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=14;fontStyle=1" value="MODULO 2: Cartelera (Estrenos / Pre-ventas / Re-estrenos)" vertex="1">
+          <mxGeometry height="30" width="600" x="280" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="boundary" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;verticalAlign=top;fontSize=12;fontStyle=1" value="Modulo Cartelera" vertex="1">
+          <mxGeometry height="650" width="800" x="200" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="usuario" parent="1" style="shape=umlActor;html=1;verticalLabelPosition=bottom;verticalAlign=top;fontSize=11" value="Usuario" vertex="1">
+          <mxGeometry height="60" width="30" x="80" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="admin" parent="1" style="shape=umlActor;html=1;verticalLabelPosition=bottom;verticalAlign=top;fontSize=11" value="Administrador / Sistema" vertex="1">
+          <mxGeometry height="60" width="30" x="80" y="570" as="geometry" />
+        </mxCell>
+        <mxCell id="cu201" parent="1" style="ellipse;whiteSpace=wrap;html=1;fontSize=11" value="CU-201 Ver cartelera completa" vertex="1">
+          <mxGeometry height="60" width="220" x="280" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="cu202" parent="1" style="ellipse;whiteSpace=wrap;html=1;fontSize=11" value="CU-202 Filtrar por categoria" vertex="1">
+          <mxGeometry height="60" width="220" x="280" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="cu203" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-203 Ver banner de Estrenos" vertex="1">
+          <mxGeometry height="60" width="220" x="640" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="cu204" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-204 Ver detalle de pelicula" vertex="1">
+          <mxGeometry height="60" width="220" x="640" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="cu205" parent="1" style="ellipse;whiteSpace=wrap;html=1;fontSize=11" value="CU-205 Clasificar pelicula automaticamente" vertex="1">
+          <mxGeometry height="60" width="220" x="280" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="cu206" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-206 Aplicar reglas de categorizacion" vertex="1">
+          <mxGeometry height="60" width="220" x="640" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" edge="1" parent="1" source="usuario" style="endArrow=none;html=1;" target="cu201">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r2" edge="1" parent="1" source="usuario" style="endArrow=none;html=1;" target="cu202">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r3" edge="1" parent="1" source="admin" style="endArrow=none;html=1;" target="cu205">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="in1" edge="1" parent="1" source="cu201" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu202" value="&amp;lt;include&amp;gt;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="in2" edge="1" parent="1" source="cu205" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu206" value="&amp;lt;include&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ex1" edge="1" parent="1" source="cu203" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu202" value="&amp;lt;&amp;lt;extend&amp;gt;&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ex2" edge="1" parent="1" source="cu204" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu201" value="&amp;lt;&amp;lt;extend&amp;gt;&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

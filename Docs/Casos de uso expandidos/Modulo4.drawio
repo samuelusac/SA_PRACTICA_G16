@@ -1,0 +1,103 @@
+<mxfile host="Electron">
+  <diagram name="Página-1" id="FmlQ__Ri0lRQIvAUjFRE">
+    <mxGraphModel dx="1414" dy="841" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=14;fontStyle=1" value="MODULO 4: Compra / Pago (con cola de mensajeria)" vertex="1">
+          <mxGeometry height="30" width="600" x="280" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="boundary" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;verticalAlign=top;fontSize=12;fontStyle=1" value="Modulo Compra / Pago" vertex="1">
+          <mxGeometry height="800" width="800" x="200" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="usuario" parent="1" style="shape=umlActor;html=1;verticalLabelPosition=bottom;verticalAlign=top;fontSize=11" value="Usuario" vertex="1">
+          <mxGeometry height="60" width="30" x="80" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="cola" parent="1" style="shape=umlActor;html=1;verticalLabelPosition=bottom;verticalAlign=top;fontSize=11" value="Cola (Consumidor)" vertex="1">
+          <mxGeometry height="60" width="30" x="80" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="pagos" parent="1" style="shape=umlActor;html=1;verticalLabelPosition=bottom;verticalAlign=top;fontSize=11" value="Sistema de Pagos Externo" vertex="1">
+          <mxGeometry height="60" width="30" x="1040" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="cu401" parent="1" style="ellipse;whiteSpace=wrap;html=1;fontSize=11" value="CU-401 Confirmar seleccion de asientos" vertex="1">
+          <mxGeometry height="60" width="220" x="280" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="cu402" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-402 Mostrar resumen de compra" vertex="1">
+          <mxGeometry height="60" width="220" x="640" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="cu403" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-403 Enviar solicitud a cola" vertex="1">
+          <mxGeometry height="60" width="220" x="640" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="cu404" parent="1" style="ellipse;whiteSpace=wrap;html=1;fontSize=11" value="CU-404 Validar asientos desde cola" vertex="1">
+          <mxGeometry height="60" width="220" x="280" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="cu409" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-409 Notificar fallo de validacion" vertex="1">
+          <mxGeometry height="60" width="220" x="640" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="cu405" parent="1" style="ellipse;whiteSpace=wrap;html=1;fontSize=11" value="CU-405 Procesar pago simulado" vertex="1">
+          <mxGeometry height="60" width="220" x="280" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="cu406" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-406 Reintentar pago (max 3)" vertex="1">
+          <mxGeometry height="60" width="220" x="640" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="cu410" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-410 Notificar rechazo de pago" vertex="1">
+          <mxGeometry height="60" width="220" x="640" y="620" as="geometry" />
+        </mxCell>
+        <mxCell id="cu407" parent="1" style="ellipse;whiteSpace=wrap;html=1;fontSize=11" value="CU-407 Emitir boleto digital" vertex="1">
+          <mxGeometry height="60" width="220" x="280" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="cu408" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-408 Generar codigo unico" vertex="1">
+          <mxGeometry height="60" width="220" x="640" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="cu411" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;fontSize=11" value="CU-411 Registrar transaccion" vertex="1">
+          <mxGeometry height="60" width="220" x="280" y="810" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" edge="1" parent="1" source="usuario" style="endArrow=none;html=1;" target="cu401">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r2" edge="1" parent="1" source="usuario" style="endArrow=none;html=1;" target="cu407">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r3" edge="1" parent="1" source="cola" style="endArrow=none;html=1;" target="cu404">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r4" edge="1" parent="1" source="pagos" style="endArrow=none;html=1;" target="cu405">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="in1" edge="1" parent="1" source="cu401" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu402" value="&amp;lt;include&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="in2" edge="1" parent="1" source="cu402" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu403" value="&lt;&lt;include&gt;&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="in3" edge="1" parent="1" source="cu403" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu404" value="&amp;lt;include&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="in4" edge="1" parent="1" source="cu404" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu405" value="&amp;lt;include&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="in5" edge="1" parent="1" source="cu405" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu407" value="&amp;lt;include&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="in6" edge="1" parent="1" source="cu407" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu408" value="&lt;&lt;include&gt;&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="in7" edge="1" parent="1" source="cu407" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu411" value="&amp;lt;include&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="in8" edge="1" parent="1" source="cu410" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu411" value="&amp;lt;include&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ex1" edge="1" parent="1" source="cu409" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu404" value="&amp;lt;&amp;lt;extend&amp;gt;&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ex2" edge="1" parent="1" source="cu410" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu405" value="&amp;lt;&amp;lt;extend&amp;gt;&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ex3" edge="1" parent="1" source="cu406" style="endArrow=open;html=1;dashed=1;fontSize=10" target="cu405" value="&amp;lt;&amp;lt;extend&amp;gt;&amp;gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
