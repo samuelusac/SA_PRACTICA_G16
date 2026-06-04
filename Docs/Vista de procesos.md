@@ -1,205 +1,228 @@
-# Vista de Procesos — Modelo 4+1
-
-## 1. Objetivo
-La Vista de Procesos describe los **hilos de ejecución**, **procesos del sistema** y los **flujos de comunicación asíncrona** entre los servicios SOA de FilmStars. Se enfoca en cómo la plataforma gestiona la **concurrencia crítica** (selección de asientos) y la **resiliencia** (pérdida de transacciones) mediante un middleware de mensajería, sin bloquear el hilo principal de la aplicación web.
+# Vista de Procesos — FilmStars
 
 ---
 
-## 2. Procesos Identificados
+## Índice
 
-| Proceso | Tipo | Descripción | Servicio Asociado |
+1. [Procesos y Hilos](#1-arquitectura-de-procesos-y-hilos)
+2. [Topología del Broker de Mensajería](#2-topología-del-broker-de-mensajería)
+3. [Flujos Productor-Consumidor Detallados](#3-flujos-productor-consumidor-detallados)
+4. [Mecanismo de Control de Concurrencia](#4-mecanismo-de-control-de-concurrencia)
+5. [Diagrama de Estados del Asiento](#5-diagrama-de-estados-del-asiento)
+6. [Descripción del Diagrama de Secuencia](#6-descripción-del-diagrama-de-secuencia)
+7. [Matriz de Responsabilidades de Procesos](#7-matriz-de-responsabilidades-de-procesos)
+8. [Trazabilidad con Casos de Uso y Requerimientos](#8-trazabilidad-con-casos-de-uso-y-requerimientos)
+
+---
+
+## 1. Arquitectura de Procesos y Hilos
+
+El sistema opera bajo un modelo **híbrido**: consultas de lectura son síncronas (REST) para mantener fluidez en la UI, mientras que todas las operaciones de escritura críticas (bloqueo de asientos, pagos, emisión de boletos) se desacoplan mediante procesos asíncronos en el broker.
+
+### Procesos por Servicio
+
+| Servicio | Proceso Principal | Hilos/Workers | Naturaleza |
 |:---|:---|:---|:---|
-| **P1. API Gateway / Web Server** | Proceso Principal | Punto de entrada único. Expone REST API al frontend. Enruta peticiones síncronas y publica mensajes asíncronos. | `svc-gateway` |
-| **P2. Gestor de Usuarios** | Proceso Independiente | Autenticación, sesiones multiperfil, validación de JWT. | `svc-users` |
-| **P3. Catálogo y Cartelera** | Proceso Independiente | Consulta de películas, categorías (Estrenos, Pre-ventas, Re-estrenos), funciones por ciudad. | `svc-movies` |
-| **P4. Motor de Reservas** | Proceso Independiente | Lógica de bloqueo temporal, mapa de asientos en tiempo real, expiración de reservas. | `svc-reservations` |
-| **P5. Procesador de Pagos** | Proceso Independiente | Simulación de pasarela de pago, emisión de boletos, compensación financiera. | `svc-payments` |
-| **P6. Broker de Mensajería** | Middleware | RabbitMQ (cluster de nodos). Gestiona colas, exchanges y routing de mensajes. | `rabbitmq` |
-| **P7. Worker de Validación de Asientos** | Consumidor Asíncrono | Valida atomicidad de asientos seleccionados contra la base de datos. | `svc-reservations` |
-| **P8. Worker de Confirmación Financiera** | Consumidor Asíncrono | Procesa pagos de forma asíncrona para evitar bloqueo del gateway. | `svc-payments` |
-| **P9. Worker de Expiración** | Daemon/Timer | Revisa periódicamente reservas temporales vencidas y libera asientos. | `svc-reservations` |
+| **User Service** | API REST de autenticación y perfiles | HTTP Handler (síncrono) | Síncrono |
+| **Movie Service** | API REST de cartelera, funciones y horarios | HTTP Handler (síncrono) | Síncrono |
+| **Reservation Service** | API REST de consulta + **Worker de Bloqueo** + **Worker de Liberación** + **Worker de Ticket** | HTTP Handler + 3 Consumer Threads | Híbrido |
+| **Payment Service** | API REST de consulta + **Worker de Validación Financiera** | HTTP Handler + 1 Consumer Thread | Híbrido |
+| **Notification Service** | **Worker de Envío de Correos** | 2 Consumer Threads (alta disponibilidad) | Asíncrono |
 
 ---
 
-## 3. Hilos de Ejecución por Proceso
+## 2. Topología del Broker de Mensajería
 
-### 3.1 Hilo Principal del Gateway (P1)
-- **Hilo HTTP Listener:** Atiende peticiones REST del cliente (síncronas para consultas, asíncronas para operaciones críticas).
-- **Hilo Publisher:** Publica mensajes en el broker sin esperar respuesta inmediata (fire-and-forget para resiliencia).
-- **Hilo WebSocket Manager:** Mantiene conexiones activas para notificar al cliente cambios en el mapa de asientos.
+Se usará **Exchange tipo `topic`** central (`filmstars.direct`) para enrutar eventos por dominio, garantizando que los mensajes críticos persistan en disco (`durable: true`) y que las colas sean resilientes a reinicios.
 
-### 3.2 Hilo del Motor de Reservas (P4)
-- **Hilo REST API:** Atiende consultas de disponibilidad (síncrona, respuesta inmediata).
-- **Hilo Seat Locker:** Ejecuta bloqueo temporal con TTL (Time-To-Live) en Redis o BD.
-- **Hilo Consumer (P7):** Escucha la cola `queue.seat.validation` para validar atomicidad.
+### Colas y Routing Keys
 
-### 3.3 Hilo del Procesador de Pagos (P5)
-- **Hilo REST API:** Expone endpoints para estado de transacción.
-- **Hilo Consumer (P8):** Escucha `queue.payment.process` para ejecutar la pasarela de pago simulada.
-- **Hilo Ticket Emitter:** Genera el boleto digital tras confirmación de pago.
-
-### 3.4 Hilo Daemon de Expiración (P9)
-- Ejecuta cada **30 segundos** (configurable).
-- Consulta reservas con `status = 'PENDING'` y `created_at < NOW() - INTERVAL '10 minutes'`.
-- Publica mensaje de liberación en `queue.seat.release`.
+| Cola | Routing Key | Productor(es) | Consumidor(es) | Propósito |
+|:---|:---|:---|:---|:---|
+| `queue.seat.blocking` | `reservation.seat.block` | Reservation Service (API) | **Reservation Service Worker** (1 instancia activa por `function_id`) | Serializar bloqueos de asientos y evitar condiciones de carrera |
+| `queue.seat.release` | `reservation.seat.release` | Reservation Service (Scheduler/TTL) + Payment Service (compensación) | **Reservation Service Worker** | Liberar asientos expirados o por pago fallido |
+| `queue.payment.validate` | `payment.validate` | Reservation Service (tras confirmar bloqueo) | **Payment Service Worker** | Procesar pago simulado de forma segura |
+| `queue.ticket.generate` | `ticket.generate` | Payment Service (tras pago exitoso) | **Reservation Service Worker** | Emitir boleto y marcar asiento como OCUPADO |
+| `queue.notification.email` | `notification.email` | Reservation Service, Payment Service, Ticket Worker | **Notification Service Worker** | Enviar confirmaciones, boletos y alertas |
 
 ---
 
-## 4. Comunicación Asíncrona: Productores y Consumidores
+## 3. Flujos Productor-Consumidor Detallados
 
-### 4.1 Topología del Broker (RabbitMQ)
+### Flujo A: Bloqueo Temporal de Asientos (Anti-condición de carrera)
 
-Se utiliza un **Exchange de tipo Topic** (`filmstars.exchange`) para permitir routing flexible basado en patrones de clave.
+**Lógica del Worker de Bloqueo:**
+1. Recibe mensaje con `user_id`, `function_id`, `seat_id`, `version`, `timestamp`.
+2. Ejecuta **CAS (Compare-And-Swap)** atómico sobre la fila del asiento.
+3. Si `affected_rows=1` (CAS exitoso): actualiza a `BLOQUEADO`, guarda `blocked_by` y `expires_at = NOW() + 5min`.
+4. Si `affected_rows=0` (CAS fallido): el asiento ya fue tomado. Publica mensaje a `queue.notification.email` con routing key `notification.email.error`.
+5. Confirma **ACK** al broker solo si la transacción de BD fue exitosa. En caso de error, usa **NACK** con requeue para reintento.
 
-| Exchange | Tipo | Routing Key Pattern | Descripción |
-|:---|:---|:---|:---|
-| `filmstars.exchange` | `topic` | `reservation.*` | Eventos del dominio de reservas |
-| `filmstars.exchange` | `topic` | `payment.*` | Eventos del dominio de pagos |
-| `filmstars.exchange` | `topic` | `notification.*` | Notificaciones al cliente |
-
-### 4.2 Colas Definidas
-
-| Cola | Binding Key | Productor | Consumidor | Durabilidad | TTL |
-|:---|:---|:---|:---|:---|:---|
-| `queue.seat.validation` | `reservation.validate` | `svc-gateway` | `Worker P7` (svc-reservations) | Durable | — |
-| `queue.seat.confirm` | `reservation.confirm` | `Worker P7` | `Worker P8` (svc-payments) | Durable | — |
-| `queue.payment.process` | `payment.process` | `Worker P7` | `Worker P8` (svc-payments) | Durable | — |
-| `queue.payment.result` | `payment.result` | `Worker P8` | `svc-gateway` (WebSocket) | Durable | — |
-| `queue.seat.release` | `reservation.release` | `Worker P9` / `Worker P8` (fallback) | `Worker P7` | Durable | — |
-| `queue.ticket.emit` | `payment.success` | `Worker P8` | `svc-gateway` / Email Service | Durable | — |
-| `queue.dead.letter` | `#` | Todas las colas (DLX) | Admin/Logging | Durable | — |
-
-### 4.3 Flujo de Productores
-
-| Evento | Productor | Routing Key | Payload (simplificado) |
-|:---|:---|:---|:---|
-| Usuario selecciona asientos | `svc-gateway` | `reservation.validate` | `{user_id, function_id, seats: ['A1','A2'], timestamp, correlation_id}` |
-| Asientos validados exitosamente | `Worker P7` | `payment.process` | `{reservation_id, amount, payment_method, correlation_id}` |
-| Pago procesado | `Worker P8` | `payment.result` | `{reservation_id, status: 'SUCCESS'/'FAILED', ticket_id?}` |
-| Reserva expirada por tiempo | `Worker P9` | `reservation.release` | `{reservation_id, seats: ['A1','A2'], reason: 'TTL_EXPIRED'}` |
-| Pago exitoso → Emitir boleto | `Worker P8` | `payment.success` | `{user_email, ticket_id, function_details, qr_code}` |
-
-### 4.4 Flujo de Consumidores
-
-| Consumidor | Cola Suscrita | Lógica de Procesamiento |
-|:---|:---|:---|
-| **Worker P7** (Validación de Asientos) | `queue.seat.validation` | 1. Inicia transacción BD con nivel de aislamiento `SERIALIZABLE` o usa `SELECT FOR UPDATE`.<<br>2. Verifica que los asientos estén en estado `AVAILABLE`.<<br>3. Si sí: cambia a `LOCKED`, crea reserva temporal, publica en `queue.seat.confirm`.<<br>4. Si no: publica `reservation.failed` con razón `SEATS_UNAVAILABLE`. |
-| **Worker P8** (Confirmación Financiera) | `queue.payment.process` | 1. Simula pasarela de pago (proceso de 2-5 segundos).<<br>2. Si éxito: actualiza reserva a `CONFIRMED`, publica `payment.success` y `payment.result`.<<br>3. Si fallo: publica `reservation.release` para liberar asientos y `payment.result` con error. |
-| **Worker P9** (Expiración) | `queue.seat.release` (también publica aquí) | 1. Cambia estado de asientos a `AVAILABLE`.<<br>2. Actualiza reserva a `EXPIRED`.<<br>3. Notifica al usuario vía WebSocket si está conectado. |
-| **Gateway WebSocket** | `queue.payment.result` | Notifica al cliente en tiempo real: "Pago confirmado" o "Asiento liberado". |
 
 ---
 
-## 5. Manejo de Concurrencia: Prevención de Condiciones de Carrera
+### Flujo B: Expiración de Reserva (Liberación Automática)
 
-### 5.1 Problema Crítico
-Escenario: Dos usuarios (U1 y U2) seleccionan simultáneamente el asiento **A1** de la misma función. Sin control, ambos podrían recibir confirmación de disponibilidad, causando sobreventa.
+1. El Scheduler interno del Reservation Service se autodispara cada **30 segundos** (Self-Message / cron interno).
+2. Ejecuta query sobre la BD Reservation: `SELECT seat_id, blocked_by, version, expires_at FROM seats WHERE status = 'BLOQUEADO' AND expires_at < NOW()`.
+3. Si el resultado es vacío: no hay asientos expirados. El Scheduler duerme 30 segundos y vuelve al paso 1.
+4. Si hay registros expirados: por cada asiento encontrado, construye un mensaje con `seat_id`, `function_id`, `blocked_by` (para auditoría), `version` actual y `reason = 'TTL_EXPIRED'`.
+5. Publica cada mensaje en la cola `queue.seat.release` del Message Broker con `persistent = true` y `delivery_mode = 2`.
+6. El Broker encola los mensajes y los entrega al **Worker de Liberación** (Consumer del Reservation Service).
+7. El Worker de Liberación consume el mensaje de `queue.seat.release` con `prefetch_count = 1`.
+8. Verifica que el asiento siga en estado `BLOQUEADO` en la fuente de verdad: `SELECT status, version FROM seats WHERE seat_id = X FOR UPDATE`.
+9. Si el estado ya cambió (ej. a `VENDIDO` o `OCUPADO` por una compra concurrente): el Worker descarta el mensaje, hace **ACK** al broker y termina sin modificar nada.
+10. Si el estado sigue siendo `BLOQUEADO`: ejecuta **CAS atómico**: `UPDATE seats SET status = 'DISPONIBLE', blocked_by = NULL, version = version + 1 WHERE seat_id = X AND version = N`.
+11. Si `affected_rows = 1` (CAS exitoso): la liberación fue exitosa. Registra el evento en tabla `audit_logs` (RNF-20) con `action = 'LIBERACION_TTL'`, `seat_id`, `timestamp` y `reason`.
+12. Si `affected_rows = 0` (CAS fallido): otro proceso modificó el asiento entre el SELECT y el UPDATE. El Worker hace **NACK** con `requeue = false` (para evitar loop infinito) y registra el conflicto en logs.
+13. El Worker hace **ACK** al broker solo si la transacción de BD fue exitosa.
+14. El Scheduler espera 30 segundos y vuelve al paso 1.
 
-### 5.2 Estrategia de Resolución
+---
 
-Se implementa una estrategia de **optimistic locking con fallback a cola serializada**:
+### Flujo C: Proceso de Pago Simulado (Transacción Segura)
 
-#### Nivel 1: Bloqueo Optimista en Base de Datos
+**Mecanismo de Idempotencia (anti-pérdida ante caídas):**
+- El mensaje lleva header `idempotency-key: <order_id>`.
+- El Payment Service mantiene tabla `processed_payments(idempotency_key PK, status, created_at)`.
+- Si recibe un mensaje con key ya existente y estado `EXITOSO`: reenvía confirmación sin reprocesar.
+- Si estado es `PROCESANDO`: espera o consulta estado actual.
+- La cola usa `delivery_mode=persistent` y `acknowledgement=manual` (ACK solo tras commit en BD).
+
+---
+
+## 4. Mecanismo de Control de Concurrencia: Asientos
+
+Este es el requisito crítico del sistema. Se implementa una **estrategia híbrida de tres capas**:
+
+### Capa 1: Serialización por Cola (Aplicación)
+`queue.seat.blocking` tiene **prefetch_count=1** y es consumida por un único worker activo por partición (particionamos por `function_id` si necesitamos escalar). Esto garantiza que dos mensajes para la misma función no se procesen simultáneamente en el mismo worker.
+
+### Capa 2: Lock Optimista en Base de Datos (Persistencia)
+
+Tabla `seats` en la BD de Reservation Service:
+
 ```sql
--- Tabla seats tiene columna version (integer) o status con control de transición
-UPDATE seats 
-SET status = 'LOCKED', locked_by = :user_id, locked_at = NOW() 
-WHERE seat_id = 'A1' 
-  AND function_id = 123 
-  AND status = 'AVAILABLE';
--- Si rows_affected = 0, el asiento ya fue tomado.
+CREATE TABLE seats (
+    seat_id       UUID PRIMARY KEY,
+    function_id   UUID NOT NULL,
+    status        ENUM('DISPONIBLE', 'BLOQUEADO', 'VENDIDO', 'OCUPADO') DEFAULT 'DISPONIBLE',
+    blocked_by    UUID NULL,
+    version       INT DEFAULT 0,
+    expires_at    TIMESTAMP NULL,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
 ```
 
-#### Nivel 2: Serialización por Cola (Message Broker)
-- Todos los mensajes de `reservation.validate` para la **misma función** se enrutan a una **cola particionada** (usando `function_id` como shard key o consistent hashing).
-- RabbitMQ garantiza que los mensajes de una misma partición se procesen **secuencialmente** por un único consumidor, eliminando race conditions en la validación.
+El Worker de Bloqueo:
+1. Lee fila: `SELECT * FROM seats WHERE seat_id=X AND function_id=Y`
+2. Verifica `status='DISPONIBLE'`
+3. Actualiza: `UPDATE seats SET status='BLOQUEADO', blocked_by=USER, version=version+1 WHERE seat_id=X AND version=Z`
+4. Si `affected_rows=0`: otro proceso lo modificó. Rechaza y notifica.
 
-#### Nivel 3: TTL y Liberación Automática
-- Un asiento bloqueado tiene un **TTL de 10 minutos** en Redis/BD.
-- Si el usuario no completa el pago, `Worker P9` libera el asiento automáticamente.
-- El frontend recibe heartbeat cada 30 segundos para refrescar el mapa de asientos.
-
-### 5.3 Diagrama de Estados del Asiento
-
-```
-[AVAILABLE] --(usuario selecciona)--> [LOCKED] --(pago exitoso)--> [OCCUPIED]
-     ^                                      |
-     |                                      | (pago fallido / TTL expira)
-     +----------[RELEASED]<------------------+
-```
+### Capa 3: TTL y Compensación (Negocio)
+- Un asiento `BLOQUEADO` tiene TTL de **5 minutos exactos** (RNF-09).
+- Si el usuario no completa el pago, el scheduler publica liberación (Flujo B).
+- Si el Payment Service falla, publica mensaje de compensación a `queue.seat.release`.
 
 ---
 
-## 6. Diagrama de Flujo de Procesos (Texto para Draw.io)
+## 5. Estados de Asientos
 
-Puedes usar esta descripción para construir tu diagrama en **Draw.io** o **LucidChart**:
+**Eventos disparadores:**
 
-```
-[Cliente/Frontend]
-       |
-       | HTTP POST /api/reservations/validate
-       v
-[API Gateway (P1)] ----(síncrono)----> [svc-users] Validar JWT
-       |
-       | (asíncrono) Publish to exchange
-       v
-[RabbitMQ: filmstars.exchange]
-       | routing_key: reservation.validate
-       v
-[Queue: queue.seat.validation] ----(consume)----> [Worker P7 (svc-reservations)]
-       |                                              |
-       | 1. SELECT FOR UPDATE / SERIALIZABLE            |
-       | 2. UPDATE seat status = LOCKED                 |
-       | 3. INSERT temporary reservation (TTL 10min)    |
-       v
-[Publish: payment.process] ----> [Queue: queue.payment.process]
-                                      |
-                                      v
-                              [Worker P8 (svc-payments)]
-                                      |
-                                      | 1. Simular pasarela de pago
-                                      | 2. IF success:
-                                      |    - UPDATE reservation = CONFIRMED
-                                      |    - UPDATE seat = OCCUPIED
-                                      |    - Publish: payment.success
-                                      | 3. IF fail:
-                                      |    - Publish: reservation.release
-                                      v
-[Queue: payment.result] <----(Publish)----+
-       |
-       | (consume)
-       v
-[Gateway WebSocket] ----> Notifica al Cliente: "Boleto emitido" o "Pago rechazado"
+| Transición | Evento | Proceso Responsable | CU |
+|:---|:---|:---|:---|
+| DISPONIBLE → BLOQUEADO | Usuario selecciona asiento (CAS exitoso) | Reservation Service Worker (por cola) | CU-302, CU-305 |
+| BLOQUEADO → DISPONIBLE | TTL expira (5 min) o pago fallido | Scheduler / Payment Service (compensación) | CU-307, CU-410 |
+| BLOQUEADO → OCUPADO | Pago validado exitosamente | Payment Service → Ticket Worker | CU-404, CU-407 |
+| OCUPADO → LIBERADO | Cancelación administrativa o reembolso | Proceso manual/admin | — |
+| LIBERADO → DISPONIBLE | Liberación completada (compensación finalizada) | Scheduler / Worker automático | CU-307 |
 
-[Daemon P9 (cada 30s)] ----> Revisa reservas expiradas
-       |
-       | Publish: reservation.release
-       v
-[Queue: queue.seat.release] ----> [Worker P7] Libera asiento a AVAILABLE
-```
+**Invariante de Consistencia (RNF-10):** En cualquier instante t, un asiento tiene exactamente UN estado. No existen estados superpuestos ni transiciones parciales.
 
 ---
 
-## 7. Resumen de Atributos de Calidad Cubiertos
+## 6. Descripción del Diagrama de Secuencia
 
-| Atributo | Cómo se satisface en esta Vista |
-|:---|:---|
-| **Disponibilidad** | El gateway no se bloquea; las operaciones críticas se delegan a workers. |
-| **Escalabilidad** | Los workers P7, P8 y P9 pueden replicarse horizontalmente (múltiples instancias consumiendo de la misma cola). |
-| **Consistencia** | Serialización en la BD + particionamiento de colas por función evitan race conditions. |
-| **Tolerancia a fallos** | Dead Letter Exchange (`queue.dead.letter`) captura mensajes fallidos para reintento o auditoría. |
-| **Rendimiento** | Las consultas de catálogo (P3) permanecen síncronas y rápidas; solo la compra es asíncrona. |
+### Participantes (11 líneas de vida)
+
+| # | Participante | Tipo | Rol |
+|:---|:---|:---|:---|
+| 1 | **Usuario** | Actor | Cliente final |
+| 2 | **Frontend / API Gateway** | Servicio | Punto de entrada único, enrutamiento, WebSocket/SSE |
+| 3 | **Movie Service** | Servicio | Catálogo, ciudades, cines, funciones |
+| 4 | **Reservation Service** | Servicio | Core: asientos, bloqueos, órdenes, boletos |
+| 5 | **BD Reservation** | Base de datos | Persistencia de asientos, bloqueos, órdenes |
+| 6 | **Message Broker** | Middleware | RabbitMQ/Kafka: colas de mensajería |
+| 7 | **Consumer Reservations** | Worker | Consumidor de colas de asientos/boletos |
+| 8 | **Payment Service** | Servicio | Procesamiento de pagos simulados |
+| 9 | **BD Payment** | Base de datos | Persistencia de transacciones de pago |
+| 10 | **Consumer Payments** | Worker | Consumidor de colas de validación de pagos |
+| 11 | **Notification Service** | Servicio | Envío de emails con boletos y alertas |
+
+### Escenario: Compra exitosa concurrente de 2 usuarios que intentan el mismo asiento; solo uno gana.
+
+| Paso | Actor | Acción | Tipo de mensaje |
+|:---|:---|:---|:---|
+| 1 | Usuario A y B | `GET /movies/functions` (consulta cartelera) | ⬛ Síncrono |
+| 2 | Usuario A | `POST /seats/hold` (asiento F5, función 12) | ⬛ Síncrono |
+| 3 | Reservation Service | Verifica disponibilidad: `SELECT status, version` | ⬛ Síncrono |
+| 4 | BD Reservation | Retorna: `DISPONIBLE, version=N` | --- Retorno |
+| 5 | Reservation Service | **Publish** `queue.seat.blocking` | ⬜ Asíncrono |
+| 6 | Broker | Encola mensaje A | — |
+| 7 | Consumer Reservations | Consume msg A, ejecuta **CAS** `UPDATE ... version=N` | ⬛ Síncrono |
+| 8 | BD Reservation | Éxito. `affected_rows=1`. Estado F5 → BLOQUEADO. | — |
+| 9 | Consumer Reservations | **ACK** al broker | --- Retorno |
+| 10 | Reservation Service | Responde HTTP 202 a Usuario A: "Retenido 5 min" | --- Retorno |
+| 11 | Usuario B | `POST /seats/hold` (mismo F5, función 12) | ⬛ Síncrono |
+| 12 | Reservation Service | Verifica disponibilidad: ya está BLOQUEADO | ⬛ Síncrono |
+| 13 | Reservation Service | Responde HTTP 409 a Usuario B: "Asiento no disponible" | --- Retorno |
+| 14 | Usuario A | `POST /order/confirm` | ⬛ Síncrono |
+| 15 | Reservation Service | Valida bloqueos vigentes, crea orden `idempotency_key=reserva_001` | ⬛ Síncrono |
+| 16 | Usuario A | `POST /payment/process` | ⬛ Síncrono |
+| 17 | Reservation Service | Verifica bloqueo vigente. **Publish** `queue.payment.validate` | ⬜ Asíncrono |
+| 18 | Frontend | HTTP 202 Accepted: "Procesando compra..." | --- Retorno |
+| 19 | Consumer Payments | Consume, procesa pago simulado | ⬛ Síncrono |
+| 20 | Payment Service | `INSERT` en BD Payment con `idempotency_key` | ⬛ Síncrono |
+| 21 | Payment Service | Commit en BD Payment. **Publish** `queue.ticket.generate` | ⬜ Asíncrono |
+| 22 | Consumer Reservations | Consume, **UPDATE** BD Reservation: estado=OCUPADO, genera `ticket_code` | ⬛ Síncrono |
+| 23 | Consumer Reservations | **Publish** `queue.notification.email` con `ticket_code` | ⬜ Asíncrono |
+| 24 | Notification Service | Consume, genera PDF/QR, envía email | ⬛ Síncrono |
+| 25 | Frontend | SSE Push: `order.status='COMPLETADA'` | ⬜ Asíncrono |
+| 26 | Usuario A | Recibe boleto en pantalla + email | — |
 
 ---
 
-## 8. Recomendaciones para tu Diagrama UML
+## 7. Matriz de Responsabilidades de Procesos
 
-Cuando dibujes el **Diagrama de Procesos** formal en UML (vista de procesos del 4+1):
+| Proceso/Worker | Servicio | Cola(s) que consume | Cola(s) que produce | BD que modifica | Naturaleza |
+|:---|:---|:---|:---|:---|:---|
+| HTTP API Auth | User Service | — | — | `db_users` | Síncrono |
+| HTTP API Movies | Movie Service | — | — | `db_movies` | Síncrono |
+| HTTP API Reservas | Reservation Service | — | `queue.seat.blocking`, `queue.payment.validate` | `db_reservations` (lectura) | Síncrono |
+| **Frontend / API Gateway** | **Frontend** | — | `queue.seat.blocking` (vía API), `queue.payment.validate` (vía API) | — | **Síncrono** |
+| **Worker Bloqueo** | Reservation Service | `queue.seat.blocking` | `queue.notification.email` | `db_reservations` | **Asíncrono** |
+| **Worker Liberación** | Reservation Service | `queue.seat.release` | `queue.notification.email` | `db_reservations` | **Asíncrono** |
+| **Worker Ticket** | Reservation Service | `queue.ticket.generate` | `queue.notification.email` | `db_reservations` | **Asíncrono** |
+| **Scheduler TTL** | Reservation Service | *(interno: cron)* | `queue.seat.release` | `db_reservations` | **Asíncrono** |
+| HTTP API Pagos | Payment Service | — | — | `db_payments` (lectura) | Síncrono |
+| **Worker Pagos** | Payment Service | `queue.payment.validate` | `queue.ticket.generate`, `queue.seat.release`, `queue.notification.email` | `db_payments` | **Asíncrono** |
+| **Worker Email** | Notification Service | `queue.notification.email` | — | `db_notifications` (logs) | **Asíncrono** |
 
-1. **Usa notación de UML 2.5:** Procesos como "swimlanes" o "partitions" en un diagrama de actividades.
-2. **Diferencia visualmente:**
-   - **Líneas sólidas** para comunicación síncrona (REST).
-   - **Líneas punteadas con flecha abierta** para comunicación asíncrona (mensajes al broker).
-   - **Líneas onduladas** para eventos de tiempo (daemon P9).
-3. **Incluye el broker como "central node"** en el centro del diagrama.
-4. **Anota los routing keys** sobre las flechas asíncronas.
+---
+
+## 8. Trazabilidad con Casos de Uso y Requerimientos
+
+| Sección de Vista de Procesos | Casos de Uso asociados | Requerimientos Funcionales | Requerimientos No Funcionales |
+|:---|:---|:---|:---|
+| Flujo A (Bloqueo) | CU-301, CU-302, CU-304, CU-305 | RF-11, RF-12, RF-13, RF-14, RF-15 | RNF-02 (≤1s), RNF-05 (50 usuarios), RNF-09 (5min TTL), RNF-10 (sin doble compra) |
+| Flujo B (Expiración) | CU-307 | RF-17 | RNF-09 (5min TTL) |
+| Flujo C (Pago) | CU-401, CU-402, CU-403, CU-404, CU-405, CU-406 | RF-19, RF-20, RF-21, RF-22, RF-23, RF-24, RF-25, RF-26 | RNF-07 (entorno aislado), RNF-08 (mensajes no se pierden), RNF-14 (≤3s en cola) |
+| Flujo D (Boleto) | CU-407, CU-408, CU-409, CU-410, CU-411 | RF-21, RF-22, RF-23, RF-25, RF-27 | RNF-17 (1M transacciones), RNF-20 (auditoría) |
+| Diagrama de Estados | CU-302, CU-305, CU-307, CU-404 | RF-12, RF-14, RF-15, RF-17 | RNF-10 (consistencia) |
+| Diagrama de Secuencia | Todos los anteriores | Todos los RF críticos | Todos los RNF de concurrencia y tolerancia |
+
+---
+
+*Documento de Vista de Procesos — FilmStars · Práctica 1, Software Avanzado (USAC)*
